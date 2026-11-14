@@ -1,17 +1,69 @@
 # MCP 服务中心
 
-展示 MCP 服务，并提供连接地址、客户端配置和按需展开的接入信息。
+浏览服务，保存自己的平台账号，为不同客户端配对账号并生成独立连接。
 
-React、Next.js、shadcn/ui、Tailwind CSS。服务列表在 `lib/services.ts` 中维护；收藏和复制记录仅保存在访问者的浏览器。页面不保存连接密码，也不管理服务器授权。
+React、Next.js、shadcn/ui、Tailwind CSS；Express 提供管理 API 和 OAuth，SQLite 保存用户与授权状态。
+
+## 使用
+
+1. 注册或登录，打开「账号」添加邮箱或平台凭据。
+2. 在「服务」选择服务、客户端和允许访问的账号。
+3. 保存新生成的连接密码，将 MCP 地址填写到客户端，选择 OAuth。
+4. 在授权页面核对账号，输入这条连接的密码。
+
+邮箱连接可配对多个邮箱；其他服务每条连接配对一个账号。「连接」中可复制配置、重置密码、生成 90 天 Bearer 令牌或撤销授权。重置密码会同时使该连接的既有授权失效。登录密码和连接密码彼此独立。
+
+支持 ChatGPT、Gemini、Claude、Gemini CLI、Claude Code、VS Code 和通用 HTTP MCP 客户端的配置。客户端是否开放自定义 MCP 取决于其版本、套餐与工作区设置。
+
+## 服务
+
+| 服务 | 账号配置 |
+| --- | --- |
+| MailBridge | IMAP/SMTP 邮箱及授权码；预设常见服务商，也可填写公网邮件服务器 |
+| 学习通 | 账号与密码 |
+| 墨墨 | 用户自己的 API Token |
+| Agent Reach | 独立公开内容配置；不继承服务器已有登录态 |
+| Transcriptor | 可选 Netscape Cookie；支持的视频平台公开链接 |
+
+Agent Reach 的部分渠道需要额外的平台登录配置，此版本未提供 Cookie 管理入口。邮件管理界面目前支持 IMAP/SMTP，不提供 Microsoft Graph OAuth 账号绑定。
+
+## 部署
+
+需要 Linux、Node.js 24、Python 3.12、Bubblewrap、Nginx，以及已安装的各服务运行环境。此项目依赖同组织各服务和 `auth-ui`，并非包含所有依赖的一键安装包。
+
+```text
+/opt/mcp/control-center/          源码、依赖和 out 静态构建
+/opt/mcp/control-center/vendor/transcriptor/  视频服务的 dist、node_modules、package.json
+/opt/mcp/control-center/.video-venv/          yt-dlp 环境
+/opt/mcp/auth-ui/                 共用授权页与 server/render.mjs
+/var/lib/mcp-center/              数据库、加密密钥、按用户和连接分开的工作目录
+/etc/mcp-center.env               私有部署配置
+```
+
+在服务器构建：
 
 ```bash
 npm ci
 npm run build
-npm run preview
+npm run typecheck
+npm test
 ```
 
-打开 `http://127.0.0.1:3185/auth-ui/preview/manager/`。
+按 `.env.example` 配置 `/etc/mcp-center.env`，使用权限为 `0600` 的文件保存环境和随机生成的 32 字节十六进制加密密钥。数据库与密钥需要一起备份；切勿在升级时重新生成密钥。
 
-本地使用示例域名；HTTPS 部署默认使用当前访问域名，也可通过 `.env.local` 中的 `NEXT_PUBLIC_MCP_ORIGIN` 指定服务域名。公开源码不包含实际部署地址。
+服务模板见 `deploy/mcp-center.service`，Nginx 路由见 `deploy/nginx-locations.conf`。中心位于 `/center/`，每条连接使用 `/connect/<id>/mcp`。原有独立服务的地址和授权数据库不需要改动。
 
-`out/` 可静态托管至 `/auth-ui/preview/manager/`。`npm run typecheck` 检查类型。
+`scripts/bootstrap.mjs` 仅供已有部署的管理员一次性迁移自己的账号。它生成管理员初始登录信息到 root 专用文件，不在终端打印凭据。新部署也可以直接通过页面注册；每个用户都有独立账号库。
+
+## 隔离与验证
+
+凭据使用 AES-256-GCM 加密，登录密码与连接密码使用 scrypt 哈希。会话 Cookie 为 HttpOnly、Secure、SameSite=Lax；API 写操作检查来源。OAuth 支持动态客户端注册、PKCE、刷新令牌轮换及按连接校验访问令牌。
+
+邮件、学习通、检索和视频服务在每条连接独立的进程与文件系统视图内运行；不挂载其他用户目录或服务器凭据。Python 网络请求拒绝私网目标，视频输入限定支持的平台。墨墨后端按请求接收当前用户的 Token。删除账号、撤销或重置连接会清除对应连接的工作目录；服务进程不以 root 运行。
+
+```bash
+# 在完成 Linux 依赖部署后，以服务用户执行真实工作进程检查
+MCP_WORKER_INTEGRATION=1 node --test test/workers.integration.mjs
+```
+
+自动测试覆盖用户隔离、跨账号绑定拒绝、CSRF、PKCE、授权码重放、令牌用途限制和即时撤销。真实平台凭据仍需在部署环境验证；工具列表可用不等于平台账号已登录。

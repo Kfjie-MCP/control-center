@@ -1,0 +1,15 @@
+import {readFileSync} from 'node:fs';
+import {resolve} from 'node:path';
+import {pathToFileURL} from 'node:url';
+import {Store} from './store.mjs';
+import {WorkerPool} from './workers.mjs';
+import {createApp} from './app.mjs';
+const origin=new URL(process.env.PUBLIC_URL).origin;
+const stateDir=process.env.STATE_DIRECTORY||'/var/lib/mcp-center';
+const key=Buffer.from(readFileSync(process.env.ENCRYPTION_KEY_FILE||stateDir+'/encryption-key','utf8').trim(),'hex');
+const store=new Store(stateDir+'/center.sqlite',key);
+const pool=new WorkerPool({store,stateDir});
+const {sendAuthorizationPage:render}=await import(pathToFileURL(process.env.AUTH_UI_RENDERER||'/opt/mcp/auth-ui/server/render.mjs').href);
+const app=createApp({store,pool,origin,render,staticDir:resolve('out')});
+const server=app.listen(Number(process.env.PORT||3186),'127.0.0.1',()=>console.log('MCP center ready'));
+for(const sig of ['SIGTERM','SIGINT'])process.on(sig,()=>{server.close(()=>{pool.close();store.close();process.exit(0);});setTimeout(()=>process.exit(1),10000).unref();});

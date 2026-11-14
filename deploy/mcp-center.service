@@ -1,0 +1,29 @@
+[Unit]
+Description=MCP Service Center
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mcp-center
+Group=mcp-center
+WorkingDirectory=/opt/mcp/control-center
+EnvironmentFile=/etc/mcp-center.env
+ExecStart=/usr/local/bin/node server/index.mjs
+Restart=on-failure
+RestartSec=5
+StateDirectory=mcp-center
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/mcp-center
+MemoryMax=2G
+TasksMax=256
+KillMode=control-group
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

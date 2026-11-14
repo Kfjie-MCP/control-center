@@ -4,28 +4,36 @@
   "private": true,
   "scripts": {
     "dev": "next dev --hostname 127.0.0.1 --port 3185",
-    "build": "next build",
+    "build": "next build --webpack",
     "typecheck": "tsc --noEmit",
-    "preview": "node scripts/preview.mjs"
+    "start": "node server/index.mjs",
+    "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "@radix-ui/react-label": "latest",
+    "@radix-ui/react-slot": "latest",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "express": "5.2.1",
+    "express-rate-limit": "8.5.2",
+    "lucide-react": "latest",
     "next": "16.4.6",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "lucide-react": "latest",
-    "class-variance-authority": "^0.7.1",
-    "clsx": "^2.1.1",
     "tailwind-merge": "^3.0.0",
-    "@radix-ui/react-slot": "latest",
-    "@radix-ui/react-label": "latest"
+    "zod": "4.3.6"
   },
   "devDependencies": {
-    "typescript": "^5.9.0",
+    "@tailwindcss/postcss": "^4.3.0",
     "@types/node": "^24.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "postcss": "^8.5.0",
     "tailwindcss": "^4.3.0",
-    "@tailwindcss/postcss": "^4.3.0",
-    "postcss": "^8.5.0"
+    "typescript": "^5.9.0"
+  },
+  "engines": {
+    "node": ">=24"
   }
 }

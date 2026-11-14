@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 const config: NextConfig = {
   output: "export",
-  basePath: "/auth-ui/preview/manager",
+  basePath: "/center",
   trailingSlash: true,
 };
 export default config;

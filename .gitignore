@@ -11,6 +11,8 @@ artifacts/
 # Local credentials, runtime state, dependencies and temporary work
 node_modules/
 .venv/
+.video-venv/
+vendor/
 __pycache__/
 *.pyc
 *.sqlite
