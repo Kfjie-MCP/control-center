@@ -10,6 +10,6 @@ const key=Buffer.from(readFileSync(process.env.ENCRYPTION_KEY_FILE||stateDir+'/e
 const store=new Store(stateDir+'/center.sqlite',key);
 const pool=new WorkerPool({store,stateDir});
 const {sendAuthorizationPage:render}=await import(pathToFileURL(process.env.AUTH_UI_RENDERER||'/opt/mcp/auth-ui/server/render.mjs').href);
-const app=createApp({store,pool,origin,render,staticDir:resolve('out')});
+const app=createApp({store,pool,origin,render,staticDir:resolve('out'),registrationEnabled:process.env.ALLOW_REGISTRATION==='true'});
 const server=app.listen(Number(process.env.PORT||3186),'127.0.0.1',()=>console.log('MCP center ready'));
 for(const sig of ['SIGTERM','SIGINT'])process.on(sig,()=>{server.close(()=>{pool.close();store.close();process.exit(0);});setTimeout(()=>process.exit(1),10000).unref();});

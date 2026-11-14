@@ -6,7 +6,7 @@ React、Next.js、shadcn/ui、Tailwind CSS；Express 提供管理 API 和 OAuth�
 
 ## 使用
 
-1. 注册或登录，打开「账号」添加邮箱或平台凭据。
+1. 登录（开放注册时可先注册），打开「账号」添加邮箱或平台凭据。
 2. 在「服务」选择服务、客户端和允许访问的账号。
 3. 保存新生成的连接密码，将 MCP 地址填写到客户端，选择 OAuth。
 4. 在授权页面核对账号，输入这条连接的密码。
@@ -53,7 +53,7 @@ npm test
 
 服务模板见 `deploy/mcp-center.service`，Nginx 路由见 `deploy/nginx-locations.conf`。中心位于 `/center/`，每条连接使用 `/connect/<id>/mcp`。原有独立服务的地址和授权数据库不需要改动。
 
-`scripts/bootstrap.mjs` 仅供已有部署的管理员一次性迁移自己的账号。它生成管理员初始登录信息到 root 专用文件，不在终端打印凭据。新部署也可以直接通过页面注册；每个用户都有独立账号库。
+`scripts/bootstrap.mjs` 仅供已有部署的管理员一次性迁移自己的账号。它生成管理员初始登录信息到 root 专用文件，不在终端打印凭据。注册默认关闭；仅当私有部署环境设置 `ALLOW_REGISTRATION=true` 时，页面显示注册入口且接口接受新用户。关闭注册不影响现有用户登录、OAuth 客户端注册和 MCP 连接。每个用户都有独立账号库。
 
 ## 隔离与验证
 

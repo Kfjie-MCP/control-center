@@ -10,7 +10,7 @@ test('tenant isolation, OAuth PKCE, CSRF, token audience and immediate revocatio
  const server=createServer((req,res)=>app(req,res));await new Promise(r=>server.listen(0,'127.0.0.1',r));
  const origin='http://127.0.0.1:'+server.address().port;
  const pool={stop:()=>{},stopForAccount:()=>{},call:async(binding,method)=>method==='tools/list'?{tools:[{name:'private_accounts',description:'Test',inputSchema:{type:'object'}}]}:{content:[{type:'text',text:JSON.stringify(binding.accounts)}]}};
- app=createApp({store,pool,origin,secure:false,render:(res,context)=>res.json(context)});
+ app=createApp({store,pool,origin,secure:false,registrationEnabled:true,render:(res,context)=>res.json(context)});
  const req=async(path,{method='GET',body,cookie,token,form,badOrigin}={})=>{const response=await fetch(origin+path,{method,redirect:'manual',headers:{Origin:badOrigin||origin,...(cookie?{Cookie:cookie}:{}),...(token?{Authorization:'Bearer '+token}:{}),...(body?{'Content-Type':form?'application/x-www-form-urlencoded':'application/json'}:{}),Accept:'application/json, text/event-stream'},body:body?(form?new URLSearchParams(body):JSON.stringify(body)):undefined});const text=await response.text();let data;try{data=JSON.parse(text);}catch{data=text;}return {status:response.status,data,headers:response.headers};};
  try{
   const signup=async username=>{const r=await req('/center/api/register',{method:'POST',body:{username,password:'test-only-long-password-42'}});assert.equal(r.status,201);return {cookie:r.headers.get('set-cookie').split(';')[0],user:r.data.user};};
@@ -48,5 +48,19 @@ test('tenant isolation, OAuth PKCE, CSRF, token audience and immediate revocatio
   await req('/center/api/accounts/'+aa.id,{method:'DELETE',cookie:a.cookie,body:{}});
   assert.equal(store.binding(ba2.binding.id).revoked,1);assert.equal(store.binding(bbind.binding.id).revoked,0);
   await req('/center/api/logout',{method:'POST',cookie:b.cookie,body:{}});assert.equal((await req('/center/api/data',{cookie:b.cookie})).status,401);
+ }finally{await new Promise(r=>server.close(r));store.close();}
+});
+
+test('registration is closed by default while existing users can sign in',async()=>{
+ const store=new Store(':memory:',randomBytes(32));let app;
+ const server=createServer((req,res)=>app(req,res));await new Promise(r=>server.listen(0,'127.0.0.1',r));
+ const origin='http://127.0.0.1:'+server.address().port;
+ app=createApp({store,pool:{},origin,secure:false,render:()=>{}});
+ try{
+  await store.createUser('existing','test-only-existing-password');
+  const session=await (await fetch(origin+'/center/api/session')).json();assert.equal(session.registrationEnabled,false);
+  const post=(path,body)=>fetch(origin+'/center/api/'+path,{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const denied=await post('register',{username:'newuser',password:'test-only-new-password'});assert.equal(denied.status,403);assert.equal((await denied.json()).error,'注册已关闭');assert.equal(store.db.prepare('SELECT COUNT(*) n FROM users').get().n,1);
+  const login=await post('login',{username:'existing',password:'test-only-existing-password'});assert.equal(login.status,200);assert.equal((await login.json()).user.username,'existing');assert.ok(login.headers.get('set-cookie'));
  }finally{await new Promise(r=>server.close(r));store.close();}
 });

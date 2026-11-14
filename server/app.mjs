@@ -14,7 +14,7 @@ import {BindingProvider} from './provider.mjs';
 import {now,random,hash,passwordHash,passwordMatches} from './store.mjs';
 import {catalog,HttpError,check,cleanText,credentialsFor} from './catalog.mjs';
 const cookieName='mcp_center_session';
-export function createApp({store,pool,origin,render,staticDir,secure=true}){
+export function createApp({store,pool,origin,render,staticDir,secure=true,registrationEnabled=false}){
  const app=express();app.disable('x-powered-by');app.set('trust proxy','loopback');
  app.use((req,res,next)=>{res.set({'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer'});next();});
  app.get('/center/healthz',(_req,res)=>res.json({ok:true}));
@@ -22,7 +22,8 @@ export function createApp({store,pool,origin,render,staticDir,secure=true}){
  const authLimit=rateLimit({windowMs:15*60000,limit:20,message:{error:'尝试过于频繁，请稍后再试'}});
  const registrationLimit=rateLimit({windowMs:3600000,limit:6,message:{error:'注册过于频繁，请稍后再试'}});
  const cookie=(res,token)=>res.cookie(cookieName,token,{httpOnly:true,secure,sameSite:'lax',path:'/center',maxAge:7*86400*1000});
- api.get('/session',(req,res)=>res.json({user:req.user}));
+ api.get('/session',(req,res)=>res.json({user:req.user,registrationEnabled}));
+ api.post('/register',(_req,res,next)=>registrationEnabled?next():res.status(403).json({error:'注册已关闭'}));
  api.post('/register',registrationLimit,async(req,res)=>{const username=cleanText(req.body.username,3,32).toLowerCase(),password=req.body.password;check(/^[a-z0-9_-]+$/.test(username),'用户名使用 3–32 位字母、数字、下划线或短横线');check(typeof password==='string'&&password.length>=12&&password.length<=128,'密码需为 12–128 位');check(store.db.prepare('SELECT COUNT(*) n FROM users').get().n<500,'注册名额已满',503);check(!store.db.prepare('SELECT id FROM users WHERE username=?').get(username),'用户名不可用',409);const user=await store.createUser(username,password);cookie(res,store.newSession(user.id));store.event(user.id,'注册账号',username);res.status(201).json({user});});
  api.post('/login',authLimit,async(req,res)=>{const username=cleanText(req.body.username,1,32).toLowerCase(),password=String(req.body.password||'');check(password.length<=128,'账号或密码不正确',401);const record=store.db.prepare('SELECT * FROM users WHERE username=?').get(username);const valid=await passwordMatches(password,record?.password||'00000000000000000000000000000000:0000000000000000000000000000000000000000000000000000000000000000');check(record&&valid,'账号或密码不正确',401);cookie(res,store.newSession(record.id));res.json({user:store.user(record.id)});});
  api.use((req,res,next)=>req.user?next():res.status(401).json({error:'请先登录'}));
