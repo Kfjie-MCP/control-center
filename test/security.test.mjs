@@ -51,6 +51,18 @@ test('tenant isolation, OAuth PKCE, CSRF, token audience and immediate revocatio
   const rpc={jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'private_accounts',arguments:{}}};
   const result=await req(path+'/mcp',{method:'POST',body:rpc,token:tokens.data.access_token});assert.equal(result.status,200);assert.deepEqual(JSON.parse(result.data.result.content[0].text),[aa.id]);
   assert(logs.some(r=>r.event==='mcp_operation'&&r.tool==='private_accounts'&&r.outcome==='success'));
+  const icon='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l4sAAAAASUVORK5CYII=';
+  const originalBinding=store.binding(ba.binding.id),tokenCount=store.db.prepare('SELECT COUNT(*) n FROM oauth WHERE binding=?').get(ba.binding.id).n;
+  const edit={label:'Work mail',icon};
+  assert.equal((await req('/center/api/bindings/'+ba.binding.id,{method:'PUT',cookie:b.cookie,body:edit})).status,404);
+  assert.equal((await req('/center/api/bindings/'+ba.binding.id,{method:'PUT',cookie:a.cookie,body:{...edit,icon:'data:image/svg+xml;base64,PHN2Zz4='}})).status,400);
+  assert.equal((await req('/center/api/bindings/'+ba.binding.id,{method:'PUT',cookie:a.cookie,body:{...edit,icon:'data:image/png;base64,'+Buffer.alloc(10241).toString('base64')}})).status,400);
+  const edited=await req('/center/api/bindings/'+ba.binding.id,{method:'PUT',cookie:a.cookie,body:edit});assert.equal(edited.status,200);assert.equal(edited.data.label,'Work mail');assert.equal(edited.data.icon,icon);assert.equal(edited.data.password,undefined);
+  assert.equal(store.binding(ba.binding.id).password,originalBinding.password);assert.deepEqual(store.binding(ba.binding.id).accounts,originalBinding.accounts);assert.equal(store.db.prepare('SELECT COUNT(*) n FROM oauth WHERE binding=?').get(ba.binding.id).n,tokenCount);
+  assert.equal((await req(path+'/mcp',{method:'POST',body:rpc,token:tokens.data.access_token})).status,200);
+  const initialized=await req(path+'/mcp',{method:'POST',token:tokens.data.access_token,body:{jsonrpc:'2.0',id:2,method:'initialize',params:{protocolVersion:'2025-06-18',capabilities:{},clientInfo:{name:'fixture',version:'1'}}}});assert.equal(initialized.data.result.serverInfo.name,'Work mail');assert.equal(initialized.data.result.serverInfo.icons[0].src,icon);
+  const renamedConsent=await req(path+'/oauth/authorize?'+query);assert.equal(renamedConsent.data.connectionName,'Work mail');assert.equal(renamedConsent.data.connectionIcon,icon);assert.equal(renamedConsent.data.platformName,'Gemini');
+  const restored=await req('/center/api/bindings/'+ba.binding.id,{method:'PUT',cookie:a.cookie,body:{label:'Work mail',icon:null}});assert.equal(restored.data.icon,null);
   assert.equal((await req('/connect/'+bbind.binding.id+'/mcp',{method:'POST',body:rpc,token:tokens.data.access_token})).status,401);
   assert.equal((await req('/connect/'+ba2.binding.id+'/mcp',{method:'POST',body:rpc,token:tokens.data.access_token})).status,401);
   const pat=await req('/center/api/bindings/'+ba.binding.id+'/token',{method:'POST',cookie:a.cookie,body:{}});assert.equal(pat.status,200);

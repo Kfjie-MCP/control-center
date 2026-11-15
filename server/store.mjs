@@ -3,6 +3,7 @@ import {randomBytes,randomUUID,createHash,createCipheriv,createDecipheriv,scrypt
 import {promisify} from 'node:util';
 import {mkdirSync,chmodSync} from 'node:fs';
 import {dirname} from 'node:path';
+import {connectionName} from './branding.mjs';
 const derive=promisify(scrypt);
 export const now=()=>Math.floor(Date.now()/1000);
 export const random=()=>randomBytes(32).toString('base64url');
@@ -17,10 +18,11 @@ export class Store{
  CREATE INDEX IF NOT EXISTS accounts_owner ON accounts(user_id);
  CREATE TABLE IF NOT EXISTS bindings(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),service TEXT NOT NULL,label TEXT NOT NULL,client TEXT NOT NULL,accounts TEXT NOT NULL,password TEXT NOT NULL,revoked INTEGER NOT NULL DEFAULT 0,created INTEGER NOT NULL,last_used INTEGER);
  CREATE INDEX IF NOT EXISTS bindings_owner ON bindings(user_id);
+ CREATE TABLE IF NOT EXISTS legacy_bindings(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),service TEXT NOT NULL,source_client TEXT NOT NULL,label TEXT NOT NULL,client TEXT NOT NULL,path TEXT NOT NULL,icon TEXT,created INTEGER NOT NULL,UNIQUE(user_id,service,source_client));
  CREATE TABLE IF NOT EXISTS oauth(binding TEXT NOT NULL,kind TEXT NOT NULL,key TEXT NOT NULL,value TEXT NOT NULL,expires INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(binding,kind,key));
  CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),action TEXT NOT NULL,target TEXT NOT NULL,result TEXT NOT NULL,created INTEGER NOT NULL);
  CREATE INDEX IF NOT EXISTS events_owner ON events(user_id,created);
- `);}
+ `);if(!this.db.prepare('PRAGMA table_info(bindings)').all().some(column=>column.name==='icon'))this.db.exec('ALTER TABLE bindings ADD COLUMN icon TEXT');}
  seal(value,owner,id){const iv=randomBytes(12),cipher=createCipheriv('aes-256-gcm',this.key,iv);cipher.setAAD(Buffer.from(owner+':'+id));const body=Buffer.concat([cipher.update(JSON.stringify(value)),cipher.final()]);return Buffer.concat([iv,cipher.getAuthTag(),body]).toString('base64');}
  unseal(value,owner,id){const data=Buffer.from(value,'base64'),cipher=createDecipheriv('aes-256-gcm',this.key,data.subarray(0,12));cipher.setAAD(Buffer.from(owner+':'+id));cipher.setAuthTag(data.subarray(12,28));return JSON.parse(Buffer.concat([cipher.update(data.subarray(28)),cipher.final()]).toString());}
  async createUser(username,password,admin=false){const id=randomUUID();const digest=await passwordHash(password);this.db.prepare('INSERT INTO users VALUES (?,?,?,?,?)').run(id,username,digest,admin?1:0,now());return {id,username,admin};}
@@ -31,8 +33,9 @@ export class Store{
  account(owner,id,secret=false){const row=this.db.prepare('SELECT * FROM accounts WHERE id=? AND user_id=?').get(id,owner);if(!row)return null;const result={...row};delete result.secret;const credentials=this.unseal(row.secret,owner,id);if(secret)result.credentials=credentials;else result.settings=Object.fromEntries(['provider','imap_host','smtp_host','smtp_port'].filter(key=>credentials[key]!==undefined).map(key=>[key,credentials[key]]));return result;}
  createAccount(owner,service,label,identity,credentials){const id=randomUUID();this.db.prepare('INSERT INTO accounts(id,user_id,service,label,identity,secret,created) VALUES (?,?,?,?,?,?,?)').run(id,owner,service,label,identity,this.seal(credentials,owner,id),now());this.event(owner,'添加账号',label);return this.account(owner,id);}
  binding(id,owner){const row=owner?this.db.prepare('SELECT * FROM bindings WHERE id=? AND user_id=?').get(id,owner):this.db.prepare('SELECT * FROM bindings WHERE id=?').get(id);return row?{...row,accounts:JSON.parse(row.accounts)}:null;}
- publicBinding(row){const value={...row};delete value.password;delete value.user_id;return value;}
- snapshot(owner){return {accounts:this.db.prepare('SELECT id FROM accounts WHERE user_id=? ORDER BY created,id').all(owner).map(r=>{const a=this.account(owner,r.id);delete a.user_id;return a;}),bindings:this.db.prepare('SELECT id FROM bindings WHERE user_id=? ORDER BY created DESC,rowid DESC').all(owner).map(r=>this.publicBinding(this.binding(r.id,owner))),events:this.db.prepare('SELECT id,action,target,result,created FROM events WHERE user_id=? ORDER BY created DESC,rowid DESC LIMIT 100').all(owner)};}
+ publicBinding(row){const value={...row,label:connectionName(row)};delete value.password;delete value.user_id;return value;}
+ legacyBinding(id,owner){const row=this.db.prepare('SELECT id,service,label,client,path,icon,created FROM legacy_bindings WHERE id=? AND user_id=?').get(id,owner);return row?{...row,legacy:true,accounts:[],revoked:0,last_used:null}:null;}
+ snapshot(owner){return {accounts:this.db.prepare('SELECT id FROM accounts WHERE user_id=? ORDER BY created,id').all(owner).map(r=>{const a=this.account(owner,r.id);delete a.user_id;return a;}),bindings:[...this.db.prepare('SELECT id FROM bindings WHERE user_id=? ORDER BY created DESC,rowid DESC').all(owner).map(r=>this.publicBinding(this.binding(r.id,owner))),...this.db.prepare('SELECT id FROM legacy_bindings WHERE user_id=? ORDER BY created DESC,rowid DESC').all(owner).map(r=>this.legacyBinding(r.id,owner))].sort((a,b)=>b.created-a.created),events:this.db.prepare('SELECT id,action,target,result,created FROM events WHERE user_id=? ORDER BY created DESC,rowid DESC LIMIT 100').all(owner)};}
  oauthGet(binding,kind,key){const row=this.db.prepare('SELECT value FROM oauth WHERE binding=? AND kind=? AND key=? AND (expires=0 OR expires>?)').get(binding,kind,key,now());return row?JSON.parse(row.value):undefined;}
  oauthPut(binding,kind,key,value,expires=0){this.db.prepare('DELETE FROM oauth WHERE expires>0 AND expires<=?').run(now());this.db.prepare('INSERT OR REPLACE INTO oauth VALUES (?,?,?,?,?)').run(binding,kind,key,JSON.stringify(value),expires);}
  oauthRemove(binding,kind,key){this.db.prepare('DELETE FROM oauth WHERE binding=? AND kind=? AND key=?').run(binding,kind,key);}
