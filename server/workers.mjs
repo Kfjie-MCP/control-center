@@ -7,6 +7,7 @@ import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {StdioClientTransport} from '@modelcontextprotocol/sdk/client/stdio.js';
 import {CallToolResultSchema,ReadResourceResultSchema,ListToolsResultSchema,ListResourcesResultSchema,ListResourceTemplatesResultSchema} from '@modelcontextprotocol/sdk/types.js';
 import {HttpError,check} from './catalog.mjs';
+import {diagnostic} from './diagnostics.mjs';
 const schemas={'tools/list':ListToolsResultSchema,'tools/call':CallToolResultSchema,'resources/read':ReadResourceResultSchema,'resources/list':ListResourcesResultSchema,'resources/templates/list':ListResourceTemplatesResultSchema};
 export class WorkerPool{
  sandbox(home,paths,command,args){
@@ -19,8 +20,8 @@ export class WorkerPool{
   flags.push('--bind',home,home,'--chdir',home,'--',command,...args);
   return {command:'/usr/bin/bwrap',args:flags};
  }
- constructor({store,stateDir,sourceRoot='/opt/mcp',videoRoot='/opt/mcp/control-center/vendor/transcriptor'}){this.store=store;this.stateDir=stateDir;this.sourceRoot=sourceRoot;this.videoRoot=videoRoot;this.workers=new Map();this.creating=new Map();this.timer=setInterval(()=>{for(const [id,w]of this.workers)if(!w.busy&&Date.now()-w.used>300000)this.stop(id);},60000);this.timer.unref();}
- stop(id){const w=this.workers.get(id);if(w){w.close();this.workers.delete(id);}this.creating.get(id)?.then(w=>{w.close();if(this.workers.get(id)===w)this.workers.delete(id);}).catch(()=>{});}
+ constructor({store,stateDir,sourceRoot='/opt/mcp',videoRoot='/opt/mcp/control-center/vendor/transcriptor',callTimeoutMs=125000,log=diagnostic}){this.store=store;this.stateDir=stateDir;this.sourceRoot=sourceRoot;this.videoRoot=videoRoot;this.callTimeoutMs=callTimeoutMs;this.log=log;this.workers=new Map();this.creating=new Map();this.timer=setInterval(()=>{for(const [id,w]of this.workers)if(!w.busy&&Date.now()-w.used>300000)this.stop(id);},60000);this.timer.unref();}
+ stop(id){const w=this.workers.get(id);if(w){this.workers.delete(id);w.close();}this.creating.get(id)?.then(w=>{w.close();if(this.workers.get(id)===w)this.workers.delete(id);}).catch(()=>{});}
  discard(binding){this.stop(binding.id);const home=resolve(this.stateDir,'workspaces',binding.user_id,binding.id);check(home.startsWith(resolve(this.stateDir,'workspaces')+'/'),'Invalid workspace');const clean=()=>rmSync(home,{recursive:true,force:true});const pending=this.creating.get(binding.id);if(pending)pending.finally(clean).catch(()=>{});else clean();}
  stopForAccount(id){for(const [key,w]of this.workers)if(w.accountIds.includes(id))this.stop(key);}
  close(){clearInterval(this.timer);for(const id of this.workers.keys())this.stop(id);}
@@ -55,16 +56,19 @@ export class WorkerPool{
    if(binding.service==='xuexitong')paths.push(join(source,'xuexitong_mcp'));
    if(binding.service==='agent-reach'){paths.push(join(source,'server.py'),join(source,'bin'),join(source,'uv-tools'));env.PATH=join(source,'bin')+':'+env.PATH;env.UV_CACHE_DIR=join(home,'.cache');}
    const sandbox=this.sandbox(home,paths,join(source,'.venv/bin/python'),[script]);
-   const child=spawn(sandbox.command,sandbox.args,{cwd:home,env,stdio:['pipe','pipe','pipe'],windowsHide:true});child.stderr.on('data',()=>{});
+   const child=spawn(sandbox.command,sandbox.args,{cwd:home,env,stdio:['pipe','pipe','pipe'],windowsHide:true});
+   // Upstream stderr may contain private payloads; accept only our fixed fields.
+   let stderr='';child.stderr.on('data',chunk=>{stderr+=chunk.toString();let end;while((end=stderr.indexOf('\n'))!==-1){const line=stderr.slice(0,end);stderr=stderr.slice(end+1);if(line.startsWith('MCP_DIAGNOSTIC '))try{const value=JSON.parse(line.slice(15));if(['MAIL_INDEX_PENDING','UPSTREAM_TIMEOUT','INVALID_ARGUMENTS','UPSTREAM_ERROR'].includes(value.code))this.log({event:'worker_error',binding:binding.id,service:binding.service,code:value.code,errorType:/^[A-Za-z_]{1,60}$/.test(value.errorType)?value.errorType:'Error'});}catch{}}if(stderr.length>4096)stderr='';});
    let serial=0;const pending=new Map();let bootResolve,bootReject;const boot=new Promise((res,rej)=>{bootResolve=res;bootReject=rej;});
-   const fail=()=>{const error=new HttpError(502,'服务暂时不可用，请稍后重试');bootReject(error);for(const entry of pending.values())entry.reject(error);pending.clear();if(this.workers.get(binding.id)===worker)this.workers.delete(binding.id);};
-   child.on('error',fail);child.on('exit',fail);
+   let closed=false;
+   const fail=()=>{closed=true;if(worker)worker.closed=true;const error=new HttpError(502,'连接已重置，请重试');bootReject(error);for(const entry of pending.values())entry.reject(error);pending.clear();if(this.workers.get(binding.id)===worker)this.workers.delete(binding.id);};
+   child.on('error',fail);child.on('exit',fail);child.stdin.on('error',fail);
    createInterface({input:child.stdout}).on('line',line=>{try{const message=JSON.parse(line);if(message.ready)bootResolve();else if(message.error)bootReject(new HttpError(502,'服务启动失败'));else{const entry=pending.get(message.id);if(entry){pending.delete(message.id);entry.resolve(message.result);}}}catch{}});
    child.stdin.write(JSON.stringify({service:binding.service,source,accounts})+'\n');
    const timeout=setTimeout(()=>{child.kill();bootReject(new HttpError(504,'服务启动超时'));},20000);try{await boot;}finally{clearTimeout(timeout);}
-   worker={call:(method,params)=>new Promise((resolve,reject)=>{const id=++serial;pending.set(id,{resolve,reject});child.stdin.write(JSON.stringify({id,method,params})+'\n');}),close:()=>child.kill()};
+   worker={call:(method,params)=>new Promise((resolve,reject)=>{if(closed||!child.stdin.writable)return reject(new HttpError(503,'连接已重置，请重试'));const id=++serial;pending.set(id,{resolve,reject});child.stdin.write(JSON.stringify({id,method,params})+'\n');}),close:()=>{fail();child.kill();}};
   }
-  worker={...worker,accountIds:accounts.map(a=>a.id),signature,used:Date.now(),busy:0,queue:Promise.resolve()};this.workers.set(binding.id,worker);return worker;
+  const inner=worker;worker={...inner,closed:false,close(){if(this.closed)return;this.closed=true;inner.close();},accountIds:accounts.map(a=>a.id),signature,used:Date.now(),busy:0,queue:Promise.resolve()};this.workers.set(binding.id,worker);return worker;
  }
  async call(binding,method,params={}){
   if(binding.service==='transcriptor'&&method==='tools/call'){
@@ -75,7 +79,8 @@ export class WorkerPool{
    }
   }
   const w=await this.get(binding);check(w.busy<8,'请求排队中，请稍后重试',429);w.busy++;w.used=Date.now();
-  const operation=w.queue.catch(()=>{}).then(()=>new Promise((resolve,reject)=>{const timeout=setTimeout(()=>{this.stop(binding.id);reject(new HttpError(504,'操作超时，请重试'));},125000);Promise.resolve(w.call(method,params)).then(resolve,reject).finally(()=>clearTimeout(timeout));}));w.queue=operation;
+  const timeoutMs=binding.service==='mailbridge'?Math.min(this.callTimeoutMs,90000):this.callTimeoutMs;
+  const operation=w.queue.catch(()=>{}).then(()=>{check(!w.closed,'连接已重置，请重试',503);return new Promise((resolve,reject)=>{const timeout=setTimeout(()=>{this.log({event:'worker_timeout',binding:binding.id,service:binding.service});reject(new HttpError(504,'邮箱或平台响应超时，请重试'));if(this.workers.get(binding.id)===w)this.stop(binding.id);else w.close();},timeoutMs);Promise.resolve().then(()=>w.call(method,params)).then(resolve,reject).finally(()=>clearTimeout(timeout));});});w.queue=operation;
   try{return await operation;}finally{w.busy--;w.used=Date.now();}
  }
 }

@@ -1,5 +1,5 @@
 """One process per connection; credentials arrive only over stdin."""
-import asyncio, base64, contextlib, importlib, ipaddress, json, os, pathlib, socket, sys
+import asyncio, base64, contextlib, importlib, ipaddress, json, os, pathlib, socket, sys, time
 
 protocol=sys.stdout
 sys.stdout=sys.stderr
@@ -60,6 +60,9 @@ async def main():
                         path=pathlib.Path(attachment).resolve()
                         if downloads.resolve() not in path.parents or path.is_symlink():raise ValueError('Attachment outside this connection')
                 if service=='mailbridge':
+                    deadline=time.monotonic()+20
+                    for account in cfg.accounts:
+                        app.backend_for(account.name).index_deadline=deadline
                     value=await asyncio.to_thread(app.server._tools[name].handler,**args)
                     result={'content':[{'type':'text','text':json.dumps(value,ensure_ascii=False,default=str)}],'isError':False}
                 else:
@@ -79,7 +82,17 @@ async def main():
             emit({'id':rid,'result':result})
         except Exception as error:
             # Do not expose credentials or full upstream exception payloads.
-            emit({'id':rid,'result':{'content':[{'type':'text','text':'操作失败，请检查账号凭据、权限和请求参数。'}],'isError':True}})
+            cause=error
+            while cause.__cause__ is not None:cause=cause.__cause__
+            code='UPSTREAM_ERROR';message='操作失败，请检查账号凭据、权限和请求参数。';details={}
+            if getattr(cause,'code',None)=='MAIL_INDEX_PENDING':
+                code='MAIL_INDEX_PENDING';message=str(cause);details={'completed':cause.completed,'total':cause.total,'retryAfterSeconds':2}
+            elif isinstance(cause,TimeoutError):
+                code='UPSTREAM_TIMEOUT';message='邮箱或平台响应超时，请稍后重试。'
+            elif isinstance(cause,(TypeError,ValueError)):
+                code='INVALID_ARGUMENTS';message='请求参数无效，请检查账号和工具参数。'
+            print('MCP_DIAGNOSTIC '+json.dumps({'code':code,'errorType':type(cause).__name__}),file=sys.stderr,flush=True)
+            emit({'id':rid,'result':{'content':[{'type':'text','text':message}],'structuredContent':{'error':{'code':code,'retryable':code in ('MAIL_INDEX_PENDING','UPSTREAM_TIMEOUT'),**details}},'isError':True}})
 
 try:asyncio.run(main())
 except Exception:emit({'error':'Worker initialization failed'});sys.exit(1)

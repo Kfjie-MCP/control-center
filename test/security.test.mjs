@@ -6,11 +6,11 @@ import {Store,hash,now} from '../server/store.mjs';
 import {createApp} from '../server/app.mjs';
 
 test('tenant isolation, OAuth PKCE, CSRF, token audience and immediate revocation',async()=>{
- const store=new Store(':memory:',randomBytes(32));let app;
+ const store=new Store(':memory:',randomBytes(32)),logs=[];let app;
  const server=createServer((req,res)=>app(req,res));await new Promise(r=>server.listen(0,'127.0.0.1',r));
  const origin='http://127.0.0.1:'+server.address().port;
  const pool={stop:()=>{},stopForAccount:()=>{},call:async(binding,method)=>method==='tools/list'?{tools:[{name:'private_accounts',description:'Test',inputSchema:{type:'object'}}]}:{content:[{type:'text',text:JSON.stringify(binding.accounts)}]}};
- app=createApp({store,pool,origin,secure:false,registrationEnabled:true,render:(res,context)=>res.json(context)});
+ app=createApp({store,pool,origin,secure:false,registrationEnabled:true,render:(res,context)=>res.json(context),log:record=>logs.push(record)});
  const req=async(path,{method='GET',body,cookie,token,form,badOrigin,approvalJson=false,accept='application/json, text/event-stream'}={})=>{const response=await fetch(origin+path,{method,redirect:'manual',headers:{Origin:badOrigin||origin,...(approvalJson?{'X-MCP-Approval':'json'}:{}),...(cookie?{Cookie:cookie}:{}),...(token?{Authorization:'Bearer '+token}:{}),...(body?{'Content-Type':form?'application/x-www-form-urlencoded':'application/json'}:{}),Accept:accept},body:body?(form?new URLSearchParams(body):JSON.stringify(body)):undefined});const text=await response.text();let data;try{data=JSON.parse(text);}catch{data=text;}return {status:response.status,data,headers:response.headers};};
  try{
   const signup=async username=>{const r=await req('/center/api/register',{method:'POST',body:{username,password:'test-only-long-password-42'}});assert.equal(r.status,201);return {cookie:r.headers.get('set-cookie').split(';')[0],user:r.data.user};};
@@ -37,10 +37,20 @@ test('tenant isolation, OAuth PKCE, CSRF, token audience and immediate revocatio
   const approval=await req(path+'/oauth/approve',{method:'POST',form:true,body:{request:authorize.data.request,password:ba.password}});assert.equal(approval.status,302);const redirect=new URL(approval.headers.get('location'));assert.equal(redirect.searchParams.get('state'),'test-state');
   const exchange={grant_type:'authorization_code',client_id:register.data.client_id,redirect_uri:'http://127.0.0.1:19999/callback',code:redirect.searchParams.get('code'),code_verifier:verifier,resource};
   assert.equal((await req(path+'/oauth/token',{method:'POST',form:true,body:{...exchange,code_verifier:'wrong-verifier'}})).status,400);
-  const tokens=await req(path+'/oauth/token',{method:'POST',form:true,body:exchange});assert.equal(tokens.status,200);
+  let tokens=await req(path+'/oauth/token',{method:'POST',form:true,body:exchange});assert.equal(tokens.status,200);
   assert.equal((await req(path+'/oauth/token',{method:'POST',form:true,body:exchange})).status,400);
+  const refresh={grant_type:'refresh_token',client_id:register.data.client_id,refresh_token:tokens.data.refresh_token};
+  assert.equal((await req(path+'/oauth/token',{method:'POST',form:true,body:{...refresh,scope:'mail:full extra'}})).status,400);
+  assert.equal((await req(path+'/oauth/token',{method:'POST',form:true,body:{...refresh,resource:origin+'/other'}})).status,400);
+  tokens=await req(path+'/oauth/token',{method:'POST',form:true,body:refresh});assert.equal(tokens.status,200);
+  assert.equal((await req(path+'/oauth/token',{method:'POST',form:true,body:refresh})).status,400);
+  assert(logs.some(r=>r.event==='oauth_token'&&r.grant==='refresh_token'&&r.reason==='invalid_refresh_token'&&r.status===400));
+  tokens=await req(path+'/oauth/token',{method:'POST',form:true,body:{...refresh,refresh_token:tokens.data.refresh_token,resource,scope:'mail:full'}});assert.equal(tokens.status,200);
+  const logText=JSON.stringify(logs);
+  for(const secret of [refresh.refresh_token,tokens.data.refresh_token,tokens.data.access_token,exchange.code,verifier,ba.password,'test-state','upstream-private-example'])assert(!logText.includes(secret));
   const rpc={jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'private_accounts',arguments:{}}};
   const result=await req(path+'/mcp',{method:'POST',body:rpc,token:tokens.data.access_token});assert.equal(result.status,200);assert.deepEqual(JSON.parse(result.data.result.content[0].text),[aa.id]);
+  assert(logs.some(r=>r.event==='mcp_operation'&&r.tool==='private_accounts'&&r.outcome==='success'));
   assert.equal((await req('/connect/'+bbind.binding.id+'/mcp',{method:'POST',body:rpc,token:tokens.data.access_token})).status,401);
   assert.equal((await req('/connect/'+ba2.binding.id+'/mcp',{method:'POST',body:rpc,token:tokens.data.access_token})).status,401);
   const pat=await req('/center/api/bindings/'+ba.binding.id+'/token',{method:'POST',cookie:a.cookie,body:{}});assert.equal(pat.status,200);
