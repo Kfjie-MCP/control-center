@@ -25,7 +25,7 @@ test('recover authorized ChatGPT connections without modifying or exposing legac
   assert.deepEqual(recoverConnections({store,owner:owner.id,sources}),['mailbridge']);
   assert.equal(checksum(),before);
   const records=store.snapshot(owner.id).bindings;assert.equal(records.length,1);const legacy=records[0];
-  assert.equal(legacy.legacy,true);assert.equal(legacy.client,'ChatGPT');assert.equal(legacy.path,'/mailbridge/mcp');assert.equal(legacy.source_client,undefined);
+  assert.equal(legacy.legacy,true);assert.equal(legacy.client,'ChatGPT');assert.equal(legacy.path,'/mailbridge/mcp');assert.equal(legacy.auth,'oauth');assert.equal(legacy.source_client,undefined);
   assert.deepEqual(store.snapshot(other.id).bindings,[]);assert(!JSON.stringify(store.snapshot(owner.id)).includes('private-'));
   let app;server=createServer((req,res)=>app(req,res));await new Promise(r=>server.listen(0,'127.0.0.1',r));const origin='http://127.0.0.1:'+server.address().port;
   app=createApp({store,pool:{},origin,secure:false,render:()=>{}});
@@ -36,4 +36,18 @@ test('recover authorized ChatGPT connections without modifying or exposing legac
   assert.deepEqual(recoverConnections({store,owner:owner.id,sources}),[]);assert.equal(store.snapshot(owner.id).bindings[0].label,'My existing mailbox');assert.equal(checksum(),before);
   assert.equal(store.db.prepare('SELECT COUNT(*) n FROM oauth').get().n,0);
  }finally{if(server)await new Promise(r=>server.close(r));store.close();rmSync(dir,{recursive:true,force:true});}
+});
+
+test('recover an explicitly confirmed stateless Momo connection with its original authentication',async()=>{
+ const store=new Store(':memory:',randomBytes(32));
+ try{
+  const owner=await store.createUser('owner','fixture-only-password',true),other=await store.createUser('other','fixture-only-password'),sources=[{service:'momo',path:'/momo',auth:'bearer'}];
+  assert.throws(()=>recoverConnections({store,owner:other.id,sources}),/管理员/);
+  assert.deepEqual(recoverConnections({store,owner:owner.id,sources}),['momo']);
+  const record=store.snapshot(owner.id).bindings[0];assert.equal(record.auth,'bearer');assert.equal(record.path,'/momo');assert.equal(record.client,'ChatGPT');assert.equal(record.label,'墨墨');
+  assert.deepEqual(store.snapshot(other.id).bindings,[]);assert.equal(store.db.prepare('SELECT COUNT(*) n FROM accounts').get().n,0);assert.equal(store.db.prepare('SELECT COUNT(*) n FROM oauth').get().n,0);
+  store.db.prepare('UPDATE legacy_bindings SET label=? WHERE id=?').run('我的墨墨',record.id);
+  assert.deepEqual(recoverConnections({store,owner:owner.id,sources}),[]);assert.equal(store.snapshot(owner.id).bindings[0].label,'我的墨墨');
+  assert.throws(()=>recoverConnections({store,owner:owner.id,sources:[{...sources[0],path:'/center/'}]}),/来源配置无效/);
+ }finally{store.close();}
 });

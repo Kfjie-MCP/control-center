@@ -1,6 +1,6 @@
 export type User={id:string;username:string;admin:boolean};
 export type Account={id:string;service:string;label:string;identity:string;verified:number;created:number;settings?:{provider?:string;imap_host?:string;smtp_host?:string;smtp_port?:number}};
-export type Binding={id:string;service:string;label:string;client:string;icon?:string|null;accounts:string[];revoked:number;created:number;last_used:number|null;legacy?:boolean;path?:string};
+export type Binding={id:string;service:string;label:string;client:string;icon?:string|null;accounts:string[];revoked:number;created:number;last_used:number|null;legacy?:boolean;path?:string;auth?:'oauth'|'bearer'};
 export type Event={id:string;action:string;target:string;result:string;created:number};
 export type Snapshot={accounts:Account[];bindings:Binding[];events:Event[]};
 export const emptySnapshot:Snapshot={accounts:[],bindings:[],events:[]};

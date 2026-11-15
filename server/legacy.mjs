@@ -4,13 +4,23 @@ import {catalog,check} from './catalog.mjs';
 import {now} from './store.mjs';
 
 // This administrator-only import reads source databases without copying tokens.
-// Legacy requests continue to use their original gateway, accounts and OAuth store.
+// Legacy requests continue to use their original gateway and credentials.
 export function recoverConnections({store,owner,sources}){
  check(store.user(owner)?.admin,'仅管理员可恢复旧连接',403);
  check(Array.isArray(sources),'恢复配置无效');
  const recovered=[];
  for(const source of sources){
-  check(catalog[source.service]&&typeof source.database==='string'&&/^\/[a-z0-9/-]+\/mcp$/.test(source.path),'旧连接来源配置无效');
+  const auth=source.auth||'oauth';
+  check(catalog[source.service]&&['oauth','bearer'].includes(auth),'旧连接来源配置无效');
+  // Stateless Bearer connections have no OAuth database to discover. An
+  // administrator explicitly lists them after confirming the original setup.
+  if(auth==='bearer'){
+   check(source.service==='momo'&&source.path==='/momo','旧 Bearer 连接来源配置无效');
+   const inserted=store.db.prepare('INSERT INTO legacy_bindings(id,user_id,service,source_client,label,client,path,created,auth) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id,service,source_client) DO NOTHING').run(randomUUID(),owner,source.service,'bearer:ChatGPT',catalog[source.service].name,'ChatGPT',source.path,now(),auth);
+   if(inserted.changes){recovered.push(source.service);store.event(owner,'找回旧连接',catalog[source.service].name);}
+   continue;
+  }
+  check(typeof source.database==='string'&&/^\/[a-z0-9/-]+\/mcp$/.test(source.path),'旧连接来源配置无效');
   const db=new DatabaseSync(source.database,{readOnly:true});
   try{
    const rows=db.prepare('SELECT kind,key,value,expires FROM oauth').all();

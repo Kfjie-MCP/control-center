@@ -61,6 +61,8 @@ npm test
 
 管理员可在服务器运行 `node scripts/recover-connections.mjs /private/sources.json`，把旧服务中已授权的 ChatGPT 连接加入自己的列表。私有 JSON 包含 `owner` 用户名与 `sources` 数组，每项提供 `service`、OAuth SQLite 的 `database` 绝对路径、原 MCP 相对 `path`。只读取有未过期访问或刷新凭据的 ChatGPT 客户端，忽略测试注册；重复执行不会覆盖已编辑的名称和图标。原数据库始终只读。
 
+墨墨原有的 Bearer 连接没有 OAuth 数据库。管理员核对原接入后，可在私有清单中明确加入 `{"service":"momo","auth":"bearer","path":"/momo"}`。管理中心显示真实认证类型，沿用客户端保存的墨墨 API Token，不导入、生成或更换 Token。
+
 ## 隔离与验证
 
 凭据使用 AES-256-GCM 加密，登录密码与连接密码使用 scrypt 哈希。会话 Cookie 为 HttpOnly、Secure、SameSite=Lax；API 写操作检查来源。OAuth 支持动态客户端注册、PKCE、刷新令牌轮换及按连接校验访问令牌。
