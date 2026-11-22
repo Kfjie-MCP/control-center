@@ -50,6 +50,7 @@ async def main():
                 # Tools cannot read/write arbitrary server paths or attach credentials.
                 for key in ('dest_dir','save_dir'):
                     if key in args:args[key]=str(downloads)
+                if service=='mailbridge' and name=='mail_download_attachment':args['dest_dir']=str(downloads)
                 if 'out_path' in args:
                     suffix='.json' if str(args['out_path']).endswith('.json') else '.csv'
                     import uuid
