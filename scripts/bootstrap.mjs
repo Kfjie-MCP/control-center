@@ -1,8 +1,9 @@
 // Run locally on the server as root; no credentials are printed.
 import {readFileSync,writeFileSync,existsSync} from 'node:fs';
 import {Store,random} from '../server/store.mjs';
-const state=process.env.STATE_DIRECTORY||'/var/lib/mcp-center';
-const store=new Store(state+'/center.sqlite',Buffer.from(readFileSync(state+'/encryption-key','utf8').trim(),'hex'));
+import {readStateKey,stateLayout} from '../server/state.mjs';
+const layout=stateLayout();
+const store=new Store(layout.database,readStateKey(layout));
 if(store.db.prepare('SELECT id FROM users WHERE username=?').get('kfjie'))throw Error('Owner already initialized');
 const password=random(),owner=await store.createUser('kfjie',password,true);
 const mail='/var/lib/mailbridge/.mailbridge/accounts.json';

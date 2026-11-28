@@ -43,6 +43,7 @@ Agent Reach 的部分渠道需要额外的平台登录配置，此版本未提�
 /opt/mcp/control-center/.video-venv/          yt-dlp 环境
 /opt/mcp/auth-ui/                 共用授权页与 server/render.mjs
 /var/lib/mcp-center/              数据库、加密密钥、按用户和连接分开的工作目录
+/var/lib/mcp-center/outputs/      主动生成的报表与课表，按用户和连接归档
 /var/lib/mcp-center/attachment-links/       有期限的附件下载副本和凭证哈希
 /etc/mcp-center.env               私有部署配置
 ```
@@ -56,7 +57,7 @@ npm run typecheck
 npm test
 ```
 
-按 `.env.example` 配置 `/etc/mcp-center.env`，使用权限为 `0600` 的文件保存环境和随机生成的 32 字节十六进制加密密钥。数据库与密钥需要一起备份；切勿在升级时重新生成密钥。
+按 `.env.example` 配置 `/etc/mcp-center.env`，使用权限为 `0600` 的文件保存环境和随机生成的 32 字节十六进制加密密钥。数据库与密钥需要一起备份；切勿在升级时重新生成密钥。定位成果、在线导出和换机步骤见[数据与恢复](docs/data-recovery.md)。
 
 服务模板见 `deploy/mcp-center.service`，Nginx 路由见 `deploy/nginx-locations.conf`。中心位于 `/center/`，每条连接使用 `/connect/<id>/mcp`。原有独立服务的地址和授权数据库不需要改动。
 

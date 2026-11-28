@@ -10,6 +10,7 @@ export const random=()=>randomBytes(32).toString('base64url');
 export const hash=value=>createHash('sha256').update(value).digest('hex');
 export async function passwordHash(value){const salt=randomBytes(16).toString('hex');return salt+':'+(await derive(value,salt,32,{N:32768,r:8,p:1,maxmem:64*1024*1024})).toString('hex');}
 export async function passwordMatches(value,stored){try{const [salt,key]=stored.split(':');const actual=await derive(value,salt,32,{N:32768,r:8,p:1,maxmem:64*1024*1024});const expected=Buffer.from(key,'hex');return actual.length===expected.length&&timingSafeEqual(actual,expected);}catch{return false;}}
+export function openAccountSecret(key,value,owner,id){const data=Buffer.from(value,'base64'),cipher=createDecipheriv('aes-256-gcm',key,data.subarray(0,12));cipher.setAAD(Buffer.from(owner+':'+id));cipher.setAuthTag(data.subarray(12,28));return JSON.parse(Buffer.concat([cipher.update(data.subarray(28)),cipher.final()]).toString());}
 export class Store{
  constructor(path,key){if(key.length!==32)throw Error('A 32-byte encryption key is required');this.key=key;if(path!==':memory:')mkdirSync(dirname(path),{recursive:true,mode:0o700});this.db=new DatabaseSync(path);if(path!==':memory:')chmodSync(path,0o600);this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
  CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,username TEXT UNIQUE NOT NULL,password TEXT NOT NULL,admin INTEGER NOT NULL DEFAULT 0,created INTEGER NOT NULL);
@@ -24,7 +25,7 @@ export class Store{
  CREATE INDEX IF NOT EXISTS events_owner ON events(user_id,created);
  `);if(!this.db.prepare('PRAGMA table_info(bindings)').all().some(column=>column.name==='icon'))this.db.exec('ALTER TABLE bindings ADD COLUMN icon TEXT');if(!this.db.prepare('PRAGMA table_info(legacy_bindings)').all().some(column=>column.name==='auth'))this.db.exec("ALTER TABLE legacy_bindings ADD COLUMN auth TEXT NOT NULL DEFAULT 'oauth' CHECK(auth IN ('oauth','bearer'))");}
  seal(value,owner,id){const iv=randomBytes(12),cipher=createCipheriv('aes-256-gcm',this.key,iv);cipher.setAAD(Buffer.from(owner+':'+id));const body=Buffer.concat([cipher.update(JSON.stringify(value)),cipher.final()]);return Buffer.concat([iv,cipher.getAuthTag(),body]).toString('base64');}
- unseal(value,owner,id){const data=Buffer.from(value,'base64'),cipher=createDecipheriv('aes-256-gcm',this.key,data.subarray(0,12));cipher.setAAD(Buffer.from(owner+':'+id));cipher.setAuthTag(data.subarray(12,28));return JSON.parse(Buffer.concat([cipher.update(data.subarray(28)),cipher.final()]).toString());}
+ unseal(value,owner,id){return openAccountSecret(this.key,value,owner,id);}
  async createUser(username,password,admin=false){const id=randomUUID();const digest=await passwordHash(password);this.db.prepare('INSERT INTO users VALUES (?,?,?,?,?)').run(id,username,digest,admin?1:0,now());return {id,username,admin};}
  user(id){const row=this.db.prepare('SELECT id,username,admin FROM users WHERE id=?').get(id);return row?{...row,admin:!!row.admin}:null;}
  newSession(userId){const token=random();this.db.prepare('DELETE FROM sessions WHERE expires<=?').run(now());this.db.prepare('INSERT INTO sessions VALUES (?,?,?)').run(hash(token),userId,now()+7*86400);return token;}

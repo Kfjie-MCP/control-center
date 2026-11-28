@@ -56,6 +56,17 @@ async def main():
                     import uuid
                     args['out_path']=str(downloads/(uuid.uuid4().hex+suffix))
                 if 'filename' in args:args['filename']=pathlib.Path(str(args['filename']).replace('\\','/')).name
+                if req.get('output'):
+                    output=pathlib.Path(req['output'])
+                    if output.parent.parent!=downloads or not output.parent.name.startswith('.export-'):
+                        raise ValueError('Invalid tool output path')
+                    if service=='mailbridge' and name=='mail_export' and output.name in ('result.csv','result.json'):
+                        args['out_path']=str(output)
+                    elif service=='xuexitong' and name=='export_schedule_ics' and output.name=='result.ics':
+                        args['save_dir']=str(output.parent)
+                        args['filename']=output.name
+                    else:
+                        raise ValueError('Unexpected tool output path')
                 if args.get('attachments'):
                     for attachment in args['attachments']:
                         path=pathlib.Path(attachment).resolve()
